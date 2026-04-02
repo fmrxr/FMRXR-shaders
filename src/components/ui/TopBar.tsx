@@ -5,10 +5,12 @@ import { useShaderStore } from '@/store/shader-store';
 import { saveShader } from '@/services/supabase';
 import { clsx } from 'clsx';
 import { SaveModal } from './SaveModal';
+import { ImportModal } from './ImportModal';
 
 export function TopBar() {
   const { project, isRunning, setRunning, ui, toggleSidebar, editor, addSavedProject } = useShaderStore();
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const handleSave = async (title: string, description: string, tags: string[], isPublic: boolean) => {
@@ -86,6 +88,14 @@ export function TopBar() {
           )}
 
           <button
+            onClick={() => setShowImportModal(true)}
+            className="btn-secondary text-xs"
+            title="Import from Shadertoy"
+          >
+            Import
+          </button>
+
+          <button
             onClick={() => setShowSaveModal(true)}
             className="btn-secondary text-xs"
           >
@@ -119,6 +129,10 @@ export function TopBar() {
           onSave={handleSave}
           onClose={() => setShowSaveModal(false)}
         />
+      )}
+
+      {showImportModal && (
+        <ImportModal onClose={() => setShowImportModal(false)} />
       )}
     </>
   );

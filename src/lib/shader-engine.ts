@@ -2,22 +2,29 @@
  * ShaderEngine — Core WebGL2 multi-pass rendering engine.
  *
  * Manages:
- * - Program compilation per buffer
+ * - Program compilation per buffer (Shadertoy mainImage auto-wrapped)
  * - Framebuffer chain (Buffer A/B/C/D → Image)
  * - Ping-pong textures for feedback loops
  * - Uniform binding (built-ins + custom)
+ * - URL texture cache for imported channel assets
+ * - Audio texture binding (Phase 2)
+ * - Hand tracking data injection (Phase 3)
  * - RAF render loop
  */
 
 import type { ShaderBuffer, UniformDef } from '@/types';
+import type { HandData } from './hands-engine';
 import {
   createProgram,
   createQuadBuffer,
   createFramebuffer,
   setUniform,
   setUniformInt,
+  setUniform1fv,
+  setUniform3fv,
   bindVertexArray,
   detectWebGL2,
+  loadTextureFromUrl,
   VERTEX_SHADER_SOURCE,
   VERTEX_SHADER_SOURCE_LEGACY,
 } from './webgl-utils';
@@ -32,10 +39,15 @@ export interface EngineCallbacks {
 interface PassState {
   bufferId: string;
   program: WebGLProgram;
-  // ping-pong pair for feedback
   fbo:  [WebGLFramebuffer, WebGLFramebuffer] | null;
   tex:  [WebGLTexture,     WebGLTexture]     | null;
-  ping: number; // 0 or 1 — which side we write to this frame
+  ping: number;
+}
+
+interface AudioChannel {
+  tex: WebGLTexture;
+  time: number;
+  resolution: [number, number];
 }
 
 export class ShaderEngine {
@@ -43,9 +55,21 @@ export class ShaderEngine {
   private isWebGL2: boolean;
   private quadBuf: WebGLBuffer;
   private passes: Map<string, PassState> = new Map();
-  private bufferOrder: string[] = []; // render order, last = image
+  private bufferOrder: string[] = [];
+  private bufferDefs: ShaderBuffer[] = [];
   private uniforms: Map<string, UniformDef> = new Map();
   private callbacks: EngineCallbacks;
+
+  // URL texture cache (for imported Shadertoy channels)
+  private urlTextures: Map<string, WebGLTexture> = new Map();
+  private urlTextureResolutions: Map<string, [number, number]> = new Map();
+
+  // Audio channels (Phase 2)
+  private audioChannels: Map<number, AudioChannel> = new Map();
+
+  // Hand tracking (Phase 3)
+  private handData: HandData | null = null;
+  private handsEnabled = false;
 
   // Timing
   private startTime = 0;
@@ -86,18 +110,27 @@ export class ShaderEngine {
     const gl = this.gl;
     const vertSrc = this.isWebGL2 ? VERTEX_SHADER_SOURCE : VERTEX_SHADER_SOURCE_LEGACY;
 
-    // Preprocess: handle gl_FragColor → out var for WebGL2
     let fragSrc = buffer.code;
+
     if (this.isWebGL2) {
       if (!fragSrc.includes('#version')) {
         fragSrc = '#version 300 es\n' + fragSrc;
       }
-      if (!fragSrc.includes('out vec4') && fragSrc.includes('gl_FragColor')) {
+
+      // Auto-wrap Shadertoy mainImage shaders
+      if (fragSrc.includes('void mainImage') && !fragSrc.includes('void main(')) {
+        fragSrc += '\nout vec4 fragColor;\nvoid main() { mainImage(fragColor, gl_FragCoord.xy); }';
+      } else if (!fragSrc.includes('out vec4') && fragSrc.includes('gl_FragColor')) {
         fragSrc = fragSrc.replace(
           /void\s+main\s*\(\s*\)/,
           'out vec4 fragColor;\nvoid main()'
         );
         fragSrc = fragSrc.replace(/gl_FragColor/g, 'fragColor');
+      }
+    } else {
+      // WebGL1: wrap mainImage shaders
+      if (fragSrc.includes('void mainImage') && !fragSrc.includes('void main(')) {
+        fragSrc += '\nvoid main() { mainImage(gl_FragColor, gl_FragCoord.xy); }';
       }
     }
 
@@ -107,11 +140,9 @@ export class ShaderEngine {
       return false;
     }
 
-    // Delete old program if exists
     const existing = this.passes.get(buffer.id);
     if (existing) {
       gl.deleteProgram(existing.program);
-      // Keep fbo/tex to avoid flicker
     }
 
     const isImage = buffer.id === 'image';
@@ -144,6 +175,10 @@ export class ShaderEngine {
     this.bufferOrder = order;
   }
 
+  setBufferDefs(buffers: ShaderBuffer[]): void {
+    this.bufferDefs = buffers;
+  }
+
   setUniformDefs(defs: UniformDef[]): void {
     this.uniforms.clear();
     for (const d of defs) this.uniforms.set(d.name, d);
@@ -154,6 +189,55 @@ export class ShaderEngine {
     if (existing) {
       this.uniforms.set(name, { ...existing, value });
     }
+  }
+
+  // ─── URL Texture cache ─────────────────────────────────────────────
+
+  async loadChannelTextures(buffers: ShaderBuffer[]): Promise<void> {
+    for (const buffer of buffers) {
+      for (const channel of buffer.channels) {
+        if (typeof channel === 'string' && channel.startsWith('/api/proxy-media')) {
+          if (!this.urlTextures.has(channel)) {
+            try {
+              const tex = await loadTextureFromUrl(this.gl, channel);
+              this.urlTextures.set(channel, tex);
+              // Store resolution from image element dimensions
+              const img = new Image();
+              img.src = channel;
+              await new Promise<void>((res) => { img.onload = () => res(); img.onerror = () => res(); });
+              this.urlTextureResolutions.set(channel, [img.naturalWidth || 1024, img.naturalHeight || 1024]);
+            } catch (e) {
+              console.warn('Failed to load channel texture:', channel, e);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // ─── Audio (Phase 2) ──────────────────────────────────────────────
+
+  setAudioChannel(channelIndex: number, data: AudioChannel | null): void {
+    if (data) {
+      this.audioChannels.set(channelIndex, data);
+    } else {
+      const existing = this.audioChannels.get(channelIndex);
+      if (existing) {
+        this.gl.deleteTexture(existing.tex);
+        this.audioChannels.delete(channelIndex);
+      }
+    }
+  }
+
+  // ─── Hand tracking (Phase 3) ──────────────────────────────────────
+
+  setHandData(data: HandData | null): void {
+    this.handData = data;
+  }
+
+  setHandsEnabled(enabled: boolean): void {
+    this.handsEnabled = enabled;
+    if (!enabled) this.handData = null;
   }
 
   // ─── Render loop ───────────────────────────────────────────────────
@@ -199,8 +283,40 @@ export class ShaderEngine {
   renderFrame(): void {
     const gl = this.gl;
     const t = this.elapsed;
+    const now = performance.now();
+    const deltaMs = this.lastFrameTime > 0 ? (now - this.lastFrameTime) : 16.667;
+    const frameRate = Math.min(120, Math.max(1, 1000 / deltaMs));
 
-    // Render each buffer in order
+    const date = new Date();
+    const iDate = [
+      date.getFullYear(),
+      date.getMonth(),
+      date.getDate(),
+      date.getHours() * 3600 + date.getMinutes() * 60 + date.getSeconds() + date.getMilliseconds() / 1000,
+    ];
+
+    // Channel times from audio
+    const channelTimes = [0, 0, 0, 0];
+    const channelResolutions = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]; // 4 × vec3
+
+    for (const [idx, ach] of this.audioChannels) {
+      if (idx < 4) {
+        channelTimes[idx] = ach.time;
+        channelResolutions[idx * 3]     = ach.resolution[0];
+        channelResolutions[idx * 3 + 1] = ach.resolution[1];
+        channelResolutions[idx * 3 + 2] = 0;
+      }
+    }
+
+    // Effective mouse: hand tracking overrides pointer if hands enabled
+    let effectiveMouse = this.mouse;
+    if (this.handsEnabled && this.handData) {
+      const hx = this.handData.pos[0] * this.canvas.width;
+      const hy = this.handData.pos[1] * this.canvas.height;
+      const isPinching = this.handData.pinchStrength > 0.7;
+      effectiveMouse = [hx, hy, isPinching ? hx : 0, isPinching ? hy : 0];
+    }
+
     for (const bufferId of this.bufferOrder) {
       const pass = this.passes.get(bufferId);
       if (!pass) continue;
@@ -208,8 +324,7 @@ export class ShaderEngine {
       const isImage = bufferId === 'image';
 
       if (!isImage && pass.fbo) {
-        const writeIdx = pass.ping;
-        gl.bindFramebuffer(gl.FRAMEBUFFER, pass.fbo[writeIdx]);
+        gl.bindFramebuffer(gl.FRAMEBUFFER, pass.fbo[pass.ping]);
       } else {
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
       }
@@ -221,17 +336,35 @@ export class ShaderEngine {
       gl.useProgram(pass.program);
       bindVertexArray(gl, pass.program, this.quadBuf);
 
-      // Built-in uniforms
+      // ── Built-in uniforms ──
       setUniform(gl, pass.program, 'iTime', t);
-      setUniform(gl, pass.program, 'iResolution', [this.canvas.width, this.canvas.height]);
-      setUniform(gl, pass.program, 'iMouse', this.mouse);
+      setUniform(gl, pass.program, 'iResolution', [this.canvas.width, this.canvas.height, 1.0]);
+      setUniform(gl, pass.program, 'iMouse', effectiveMouse);
       setUniformInt(gl, pass.program, 'iFrame', this.frameCount);
-      setUniform(gl, pass.program, 'iTimeDelta', this.lastFrameTime > 0 ? (performance.now() - this.lastFrameTime) / 1000 : 0.016);
+      setUniform(gl, pass.program, 'iTimeDelta', deltaMs / 1000);
+      setUniform(gl, pass.program, 'iFrameRate', frameRate);
+      setUniform(gl, pass.program, 'iDate', iDate);
+      setUniform(gl, pass.program, 'iSampleRate', 44100.0);
+      setUniform1fv(gl, pass.program, 'iChannelTime', channelTimes);
+      setUniform3fv(gl, pass.program, 'iChannelResolution', channelResolutions);
 
-      // Bind buffer textures to iChannel slots
-      this.bindChannels(pass, this.bufferOrder);
+      // ── Hand uniforms (Phase 3) ──
+      if (this.handsEnabled && this.handData) {
+        setUniform(gl, pass.program, 'uHandPos', this.handData.pos);
+        setUniform(gl, pass.program, 'uPinchStrength', this.handData.pinchStrength);
+        setUniform(gl, pass.program, 'uHandOpen', this.handData.handOpen);
+        setUniform(gl, pass.program, 'uWrist', this.handData.wrist);
+      } else if (this.handsEnabled) {
+        setUniform(gl, pass.program, 'uHandPos', [0, 0]);
+        setUniform(gl, pass.program, 'uPinchStrength', 0);
+        setUniform(gl, pass.program, 'uHandOpen', 0);
+        setUniform(gl, pass.program, 'uWrist', [0, 0, 0]);
+      }
 
-      // Custom uniforms
+      // ── Bind channels ──
+      this.bindChannels(pass);
+
+      // ── Custom uniforms ──
       for (const [name, def] of this.uniforms) {
         const v = def.value;
         if (typeof v === 'boolean') {
@@ -245,18 +378,14 @@ export class ShaderEngine {
 
       gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-      // Flip ping-pong
       if (!isImage && pass.fbo) {
         pass.ping = 1 - pass.ping;
       }
     }
 
-    // Update stats
-    const now = performance.now();
-    const delta = now - (this.lastFrameTime || now);
     this.lastFrameTime = now;
-    if (delta > 0) {
-      this.fpsSamples.push(1000 / delta);
+    if (deltaMs > 0) {
+      this.fpsSamples.push(1000 / deltaMs);
       if (this.fpsSamples.length > 30) this.fpsSamples.shift();
       const fps = Math.round(this.fpsSamples.reduce((a, b) => a + b, 0) / this.fpsSamples.length);
       this.callbacks.onFpsUpdate(fps);
@@ -266,25 +395,51 @@ export class ShaderEngine {
     this.callbacks.onFrameUpdate(this.frameCount, t);
   }
 
-  private bindChannels(pass: PassState, bufferOrder: string[]): void {
+  private bindChannels(pass: PassState): void {
     const gl = this.gl;
-    // Default: bind previous buffers in order to iChannel0, iChannel1...
-    const otherBuffers = bufferOrder.filter(id => id !== pass.bufferId && id !== 'image');
+    const bufDef = this.bufferDefs.find(b => b.id === pass.bufferId);
 
     for (let i = 0; i < 4; i++) {
       const loc = gl.getUniformLocation(pass.program, `iChannel${i}`);
       if (loc === null) continue;
 
       gl.activeTexture(gl.TEXTURE0 + i);
-      const srcId = otherBuffers[i];
-      const src = srcId ? this.passes.get(srcId) : undefined;
 
-      if (src?.tex) {
-        const readIdx = 1 - src.ping; // read from the side we just finished writing
-        gl.bindTexture(gl.TEXTURE_2D, src.tex[readIdx]);
-      } else {
-        gl.bindTexture(gl.TEXTURE_2D, null);
+      const channelVal = bufDef?.channels[i];
+
+      // Audio channel overrides
+      const audioCh = this.audioChannels.get(i);
+      if (audioCh) {
+        gl.bindTexture(gl.TEXTURE_2D, audioCh.tex);
+        gl.uniform1i(loc, i);
+        continue;
       }
+
+      if (typeof channelVal === 'string' && channelVal.startsWith('/api/proxy-media')) {
+        // URL texture
+        const tex = this.urlTextures.get(channelVal) ?? null;
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+      } else if (typeof channelVal === 'string') {
+        // Buffer reference
+        const src = this.passes.get(channelVal);
+        if (src?.tex) {
+          const readIdx = 1 - src.ping;
+          gl.bindTexture(gl.TEXTURE_2D, src.tex[readIdx]);
+        } else {
+          gl.bindTexture(gl.TEXTURE_2D, null);
+        }
+      } else {
+        // Legacy: default binding — bind previous buffers in order
+        const otherBuffers = this.bufferOrder.filter(id => id !== pass.bufferId && id !== 'image');
+        const srcId = otherBuffers[i];
+        const src = srcId ? this.passes.get(srcId) : undefined;
+        if (src?.tex) {
+          gl.bindTexture(gl.TEXTURE_2D, src.tex[1 - src.ping]);
+        } else {
+          gl.bindTexture(gl.TEXTURE_2D, null);
+        }
+      }
+
       gl.uniform1i(loc, i);
     }
   }
@@ -293,7 +448,6 @@ export class ShaderEngine {
 
   resize(width: number, height: number): void {
     const gl = this.gl as WebGL2RenderingContext;
-    // Recreate framebuffers at new size
     for (const [id, pass] of this.passes) {
       if (id === 'image') continue;
       if (pass.fbo) {
@@ -326,6 +480,14 @@ export class ShaderEngine {
         gl.deleteTexture(pass.tex[1]);
       }
     }
+    for (const tex of this.urlTextures.values()) {
+      gl.deleteTexture(tex);
+    }
+    for (const ach of this.audioChannels.values()) {
+      gl.deleteTexture(ach.tex);
+    }
     this.passes.clear();
+    this.urlTextures.clear();
+    this.audioChannels.clear();
   }
 }

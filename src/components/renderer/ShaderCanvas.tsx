@@ -4,11 +4,16 @@ import React, { useRef, useEffect, useCallback } from 'react';
 import { useShaderEngine } from '@/hooks/useShaderEngine';
 import { useShaderStore } from '@/store/shader-store';
 import { useExport } from '@/hooks/useExport';
+import type { ShaderEngine } from '@/lib/shader-engine';
 import { clsx } from 'clsx';
 
-export function ShaderCanvas() {
+interface ShaderCanvasProps {
+  engineRef?: React.RefObject<ShaderEngine | null>;
+}
+
+export function ShaderCanvas({ engineRef: externalEngineRef }: ShaderCanvasProps = {}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const { handleMouseMove, handleMouseDown, resetTime, togglePlay, engine } = useShaderEngine(canvasRef);
+  const { handleMouseMove, handleMouseDown, resetTime, togglePlay, engine } = useShaderEngine(canvasRef, externalEngineRef);
   const { snapshot, toggleRecording } = useExport(canvasRef);
   const { stats, isRunning, ui, setQuality, setRunning } = useShaderStore();
 

@@ -5,8 +5,13 @@ import { ShaderEngine } from '@/lib/shader-engine';
 import { useShaderStore } from '@/store/shader-store';
 import type { ShaderProject } from '@/types';
 
-export function useShaderEngine(canvasRef: React.RefObject<HTMLCanvasElement>) {
-  const engineRef = useRef<ShaderEngine | null>(null);
+export function useShaderEngine(
+  canvasRef: React.RefObject<HTMLCanvasElement>,
+  externalEngineRef?: React.RefObject<ShaderEngine | null>
+) {
+  const internalRef = useRef<ShaderEngine | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const engineRef = (externalEngineRef ?? internalRef) as React.MutableRefObject<ShaderEngine | null>;
   const store = useShaderStore();
 
   const {
@@ -43,11 +48,15 @@ export function useShaderEngine(canvasRef: React.RefObject<HTMLCanvasElement>) {
 
     const bufferOrder = project.buffers.map(b => b.id);
     engine.setBufferOrder(bufferOrder);
+    engine.setBufferDefs(project.buffers);
 
     for (const buffer of project.buffers) {
       engine.compileBuffer(buffer);
     }
     engine.setUniformDefs(project.uniforms);
+
+    // Kick off async texture loading for any URL channels (fire-and-forget)
+    engine.loadChannelTextures(project.buffers).catch(console.warn);
   }, [project.buffers]);
 
   // ─── Sync uniforms ───────────────────────────────────────────────

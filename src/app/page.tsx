@@ -9,9 +9,11 @@ import { RightPanel }      from '@/components/panels/RightPanel';
 import { ResizablePanel }  from '@/components/ui/ResizablePanel';
 import { StatusBar }       from '@/components/ui/StatusBar';
 import { ToastContainer }  from '@/components/ui/Toast';
+import type { ShaderEngine } from '@/lib/shader-engine';
 
 export default function HomePage() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const engineRef = useRef<ShaderEngine | null>(null);
 
   return (
     <div className="flex flex-col h-screen overflow-hidden">
@@ -22,14 +24,14 @@ export default function HomePage() {
 
         {/* Center: canvas + editor */}
         <div className="flex-1 flex flex-col overflow-hidden min-w-0">
-          <ShaderCanvas />
+          <ShaderCanvas engineRef={engineRef} />
 
           <ResizablePanel defaultHeight={280} minHeight={100} maxHeight={600}>
             <ShaderEditor />
           </ResizablePanel>
         </div>
 
-        <RightPanel canvasRef={canvasRef} />
+        <RightPanel canvasRef={canvasRef} engineRef={engineRef} />
       </div>
 
       <StatusBar />

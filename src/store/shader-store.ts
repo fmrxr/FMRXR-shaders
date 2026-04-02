@@ -3,6 +3,8 @@ import { immer } from 'zustand/middleware/immer';
 import type { ShaderProject, ShaderBuffer, UniformDef, ExportConfig } from '@/types';
 import { GLSL_TEMPLATES, DEFAULT_BUFFER_CODE } from '@/lib/glsl-templates';
 import { parseUniforms } from '@/lib/uniform-parser';
+import { enableMapSet } from "immer";
+enableMapSet();
 
 // ─── State shape ─────────────────────────────────────────────────────
 
@@ -22,11 +24,13 @@ interface EditorState {
 
 interface UIState {
   sidebarOpen: boolean;
-  rightPanelTab: 'uniforms' | 'buffers' | 'export' | 'info';
+  rightPanelTab: 'uniforms' | 'buffers' | 'export' | 'info' | 'audio' | 'hands';
   exportConfig: ExportConfig;
   isRecording: boolean;
   isExporting: boolean;
   quality: number;  // 0.25 | 0.5 | 0.75 | 1.0
+  audioEnabled: boolean;
+  handsEnabled: boolean;
 }
 
 export interface ShaderStore {
@@ -67,6 +71,8 @@ export interface ShaderStore {
   setExporting: (e: boolean) => void;
   toggleSidebar: () => void;
   setRightPanelTab: (tab: UIState['rightPanelTab']) => void;
+  setAudioEnabled: (v: boolean) => void;
+  setHandsEnabled: (v: boolean) => void;
 
   // Actions — Library
   addSavedProject: (p: ShaderProject) => void;
@@ -138,6 +144,8 @@ export const useShaderStore = create<ShaderStore>()(
       isRecording: false,
       isExporting: false,
       quality: 1.0,
+      audioEnabled: false,
+      handsEnabled: false,
     },
 
     // ── Project actions ──
@@ -233,6 +241,8 @@ export const useShaderStore = create<ShaderStore>()(
     setExporting: (e) => set((s) => { s.ui.isExporting = e; }),
     toggleSidebar: () => set((s) => { s.ui.sidebarOpen = !s.ui.sidebarOpen; }),
     setRightPanelTab: (tab) => set((s) => { s.ui.rightPanelTab = tab; }),
+    setAudioEnabled: (v) => set((s) => { s.ui.audioEnabled = v; }),
+    setHandsEnabled: (v) => set((s) => { s.ui.handsEnabled = v; }),
 
     // ── Library ──
 

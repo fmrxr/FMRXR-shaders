@@ -194,6 +194,51 @@ export function detectWebGL2(canvas: HTMLCanvasElement): {
   throw new Error('WebGL is not supported in this browser.');
 }
 
+export function setUniform1fv(
+  gl: WebGL2RenderingContext | WebGLRenderingContext,
+  program: WebGLProgram,
+  name: string,
+  values: number[]
+): void {
+  const loc = gl.getUniformLocation(program, name);
+  if (loc !== null) gl.uniform1fv(loc, new Float32Array(values));
+}
+
+export function setUniform3fv(
+  gl: WebGL2RenderingContext | WebGLRenderingContext,
+  program: WebGLProgram,
+  name: string,
+  values: number[]
+): void {
+  const loc = gl.getUniformLocation(program, name);
+  if (loc !== null) gl.uniform3fv(loc, new Float32Array(values));
+}
+
+export async function loadTextureFromUrl(
+  gl: WebGL2RenderingContext | WebGLRenderingContext,
+  url: string
+): Promise<WebGLTexture> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+      const tex = gl.createTexture();
+      if (!tex) { reject(new Error('Failed to create texture')); return; }
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, img);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.REPEAT);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.generateMipmap(gl.TEXTURE_2D);
+      gl.bindTexture(gl.TEXTURE_2D, null);
+      resolve(tex);
+    };
+    img.onerror = () => reject(new Error(`Failed to load texture: ${url}`));
+    img.src = url;
+  });
+}
+
 /**
  * Inject Shadertoy-compatible precision + built-in declarations
  * into user GLSL if they don't already exist.

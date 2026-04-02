@@ -3,7 +3,10 @@ import type { UniformDef, UniformType } from '@/types';
 const BUILTIN_UNIFORMS = new Set([
   'iTime', 'iResolution', 'iMouse', 'iFrame',
   'iChannel0', 'iChannel1', 'iChannel2', 'iChannel3',
-  'iTimeDelta', 'iDate', 'iSampleRate',
+  'iTimeDelta', 'iDate', 'iSampleRate', 'iFrameRate',
+  'iChannelTime', 'iChannelResolution',
+  // Hand uniforms (Phase 3)
+  'uHandPos', 'uPinchStrength', 'uHandOpen', 'uWrist',
 ]);
 
 const TYPE_DEFAULTS: Record<string, UniformDef['value']> = {
