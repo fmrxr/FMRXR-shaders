@@ -29,6 +29,28 @@ import {
   VERTEX_SHADER_SOURCE_LEGACY,
 } from './webgl-utils';
 
+// Shadertoy-compatible uniform declarations injected into every fragment shader
+// that doesn't already declare them. Matches what Shadertoy injects automatically.
+function SHADERTOY_UNIFORMS_HEADER(isWebGL2: boolean): string {
+  const samplerType = isWebGL2 ? 'sampler2D' : 'sampler2D';
+  return [
+    'uniform vec3      iResolution;',
+    'uniform float     iTime;',
+    'uniform float     iTimeDelta;',
+    'uniform float     iFrameRate;',
+    'uniform float     iFrame;',
+    'uniform float     iChannelTime[4];',
+    'uniform vec3      iChannelResolution[4];',
+    'uniform vec4      iMouse;',
+    'uniform vec4      iDate;',
+    'uniform float     iSampleRate;',
+    `uniform ${samplerType} iChannel0;`,
+    `uniform ${samplerType} iChannel1;`,
+    `uniform ${samplerType} iChannel2;`,
+    `uniform ${samplerType} iChannel3;`,
+  ].join('\n') + '\n';
+}
+
 export interface EngineCallbacks {
   onFpsUpdate: (fps: number) => void;
   onFrameUpdate: (frame: number, time: number) => void;
@@ -110,29 +132,7 @@ export class ShaderEngine {
     const gl = this.gl;
     const vertSrc = this.isWebGL2 ? VERTEX_SHADER_SOURCE : VERTEX_SHADER_SOURCE_LEGACY;
 
-    let fragSrc = buffer.code;
-
-    if (this.isWebGL2) {
-      if (!fragSrc.includes('#version')) {
-        fragSrc = '#version 300 es\n' + fragSrc;
-      }
-
-      // Auto-wrap Shadertoy mainImage shaders
-      if (fragSrc.includes('void mainImage') && !fragSrc.includes('void main(')) {
-        fragSrc += '\nout vec4 fragColor;\nvoid main() { mainImage(fragColor, gl_FragCoord.xy); }';
-      } else if (!fragSrc.includes('out vec4') && fragSrc.includes('gl_FragColor')) {
-        fragSrc = fragSrc.replace(
-          /void\s+main\s*\(\s*\)/,
-          'out vec4 fragColor;\nvoid main()'
-        );
-        fragSrc = fragSrc.replace(/gl_FragColor/g, 'fragColor');
-      }
-    } else {
-      // WebGL1: wrap mainImage shaders
-      if (fragSrc.includes('void mainImage') && !fragSrc.includes('void main(')) {
-        fragSrc += '\nvoid main() { mainImage(gl_FragColor, gl_FragCoord.xy); }';
-      }
-    }
+    let fragSrc = this.preprocessFragment(buffer.code);
 
     const result = createProgram(gl, vertSrc, fragSrc);
     if ('error' in result) {
@@ -169,6 +169,51 @@ export class ShaderEngine {
 
     this.callbacks.onCompileSuccess(buffer.id);
     return true;
+  }
+
+  private preprocessFragment(code: string): string {
+    const isWebGL2 = this.isWebGL2;
+
+    // ── 1. Version header ──────────────────────────────────────────
+    const hasVersion = /^\s*#version/.test(code);
+
+    // ── 2. Shadertoy uniform declarations ─────────────────────────
+    // Inject if not already declared (user may have written their own)
+    const needsUniforms = !code.includes('uniform vec3 iResolution');
+    const uniformsHeader = needsUniforms ? SHADERTOY_UNIFORMS_HEADER(isWebGL2) : '';
+
+    // ── 3. Precision ───────────────────────────────────────────────
+    const hasPrecision = /precision\s+\w+\s+float/.test(code);
+    const precisionHeader = hasPrecision ? '' :
+      (isWebGL2
+        ? 'precision highp float;\nprecision highp int;\nprecision highp sampler2D;\n'
+        : 'precision mediump float;\n');
+
+    // ── 4. Build preamble ──────────────────────────────────────────
+    let preamble = '';
+    if (isWebGL2 && !hasVersion) preamble += '#version 300 es\n';
+    preamble += precisionHeader;
+    preamble += uniformsHeader;
+
+    let src = preamble + code;
+
+    // ── 5. mainImage → void main() wrapper ────────────────────────
+    const isShadertoyStyle = src.includes('void mainImage') && !src.includes('void main(');
+    if (isWebGL2) {
+      if (isShadertoyStyle) {
+        // Declare output variable and wrap
+        src += '\nout vec4 fragColor;\nvoid main() { mainImage(fragColor, gl_FragCoord.xy); }';
+      } else if (!src.includes('out vec4') && src.includes('gl_FragColor')) {
+        src = src.replace(/void\s+main\s*\(\s*\)/, 'out vec4 fragColor;\nvoid main()');
+        src = src.replace(/gl_FragColor/g, 'fragColor');
+      }
+    } else {
+      if (isShadertoyStyle) {
+        src += '\nvoid main() { mainImage(gl_FragColor, gl_FragCoord.xy); }';
+      }
+    }
+
+    return src;
   }
 
   setBufferOrder(order: string[]): void {

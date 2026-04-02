@@ -26,7 +26,43 @@ export function ImportModal({ onClose }: Props) {
     setWarnings([]);
 
     try {
-      const res = await fetch(`/api/import-shadertoy?url=${encodeURIComponent(url.trim())}`);
+      // Extract the shader ID to build the canonical URL
+      const trimmed = url.trim().replace(/#.*$/, ''); // strip fragment
+      const idMatch = trimmed.match(/shadertoy\.com\/view\/([A-Za-z0-9_]+)/) ?? trimmed.match(/^([A-Za-z0-9_]{4,10})$/);
+      if (!idMatch) { setError('Invalid Shadertoy URL or ID'); return; }
+      const shaderId = idMatch[1];
+      const shadertoyUrl = `https://www.shadertoy.com/view/${shaderId}`;
+
+      // Fetch the Shadertoy page from the user's browser (bypasses server-side IP blocks)
+      let html: string;
+      try {
+        const pageRes = await fetch(shadertoyUrl, {
+          credentials: 'omit',
+          headers: { 'Accept': 'text/html' },
+        });
+        if (!pageRes.ok) throw new Error(`${pageRes.status}`);
+        html = await pageRes.text();
+      } catch {
+        // CORS blocked in browser — fall back to server-side fetch
+        const fallbackRes = await fetch(`/api/import-shadertoy?url=${encodeURIComponent(shadertoyUrl)}`);
+        const fallbackData = await fallbackRes.json() as ImportResult & { error?: string };
+        if (!fallbackRes.ok || fallbackData.error) {
+          setError(fallbackData.error ?? 'Import failed');
+          return;
+        }
+        setProject(fallbackData.project);
+        setWarnings(fallbackData.warnings ?? []);
+        setImported(true);
+        if ((fallbackData.warnings ?? []).length === 0) onClose();
+        return;
+      }
+
+      // POST the HTML to our parse endpoint (no IP issues, just parsing)
+      const res = await fetch('/api/import-shadertoy', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ html, url: shadertoyUrl }),
+      });
       const data = await res.json() as ImportResult & { error?: string };
 
       if (!res.ok || data.error) {

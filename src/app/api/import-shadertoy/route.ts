@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { extractShadertoyId, parsePage, adaptToProject } from '@/lib/shadertoy-importer';
+import { extractShadertoyId, adaptToProject } from '@/lib/shadertoy-importer';
+import type { ShadertoyRawData } from '@/lib/shadertoy-importer';
 
+/**
+ * GET /api/import-shadertoy?url=...&key=...
+ *
+ * Uses the official Shadertoy API (requires user's API key).
+ * API keys are free for Silver/Gold accounts: shadertoy.com/myapps
+ */
 export async function GET(request: NextRequest) {
   const url = request.nextUrl.searchParams.get('url');
+  const key = request.nextUrl.searchParams.get('key');
 
-  if (!url) {
-    return NextResponse.json({ error: 'Missing url parameter' }, { status: 400 });
-  }
+  if (!url) return NextResponse.json({ error: 'Missing url parameter' }, { status: 400 });
+  if (!key) return NextResponse.json({ error: 'missing_key' }, { status: 400 });
 
   let shaderId: string;
   try {
@@ -15,37 +22,44 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: (e as Error).message }, { status: 400 });
   }
 
-  let html: string;
+  let raw: ShadertoyRawData;
   try {
-    const res = await fetch(`https://www.shadertoy.com/view/${shaderId}`, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Cache-Control': 'no-cache',
-        'Referer': 'https://www.shadertoy.com/',
-      },
-      // 10 second timeout
+    const apiUrl = `https://www.shadertoy.com/api/v1/shaders/${shaderId}?key=${encodeURIComponent(key)}`;
+    const res = await fetch(apiUrl, {
+      headers: { 'Accept': 'application/json' },
       signal: AbortSignal.timeout(10_000),
     });
 
     if (!res.ok) {
       return NextResponse.json(
-        { error: `Shadertoy returned ${res.status}. The shader may not exist.` },
+        { error: `Shadertoy API returned ${res.status}` },
         { status: 502 }
       );
     }
 
-    html = await res.text();
+    const json = await res.json() as { Error?: string; Shader?: ShadertoyRawData };
+
+    if (json.Error) {
+      // Common API errors: "Invalid key", "Shader not found", "Shader is private"
+      if (json.Error.toLowerCase().includes('key')) {
+        return NextResponse.json({ error: 'invalid_key' }, { status: 401 });
+      }
+      return NextResponse.json({ error: json.Error }, { status: 422 });
+    }
+
+    if (!json.Shader) {
+      return NextResponse.json({ error: 'No shader data in API response' }, { status: 422 });
+    }
+
+    raw = json.Shader;
   } catch (e) {
     if ((e as Error).name === 'TimeoutError') {
       return NextResponse.json({ error: 'Request to Shadertoy timed out' }, { status: 504 });
     }
-    return NextResponse.json({ error: 'Failed to fetch shader page' }, { status: 502 });
+    return NextResponse.json({ error: 'Failed to reach Shadertoy API' }, { status: 502 });
   }
 
   try {
-    const raw = parsePage(html);
     const result = adaptToProject(raw);
     return NextResponse.json(result);
   } catch (e) {
