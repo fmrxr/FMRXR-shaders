@@ -7,11 +7,12 @@ import { clsx } from 'clsx';
 interface SaveModalProps {
   project: ShaderProject;
   saving: boolean;
+  error?: string | null;
   onSave: (title: string, description: string, tags: string[], isPublic: boolean) => void;
   onClose: () => void;
 }
 
-export function SaveModal({ project, saving, onSave, onClose }: SaveModalProps) {
+export function SaveModal({ project, saving, error, onSave, onClose }: SaveModalProps) {
   const [title, setTitle]       = useState(project.title);
   const [description, setDesc]  = useState(project.description ?? '');
   const [tagsStr, setTagsStr]   = useState(project.tags.join(', '));
@@ -86,6 +87,18 @@ export function SaveModal({ project, saving, onSave, onClose }: SaveModalProps) 
               )} />
             </button>
           </div>
+
+          {error && (
+            <div className="bg-forge-red/10 border border-forge-red/20 rounded-lg px-3 py-2.5">
+              <p className="text-forge-red text-xs font-mono font-semibold mb-0.5">Save failed</p>
+              <p className="text-forge-red/80 text-xs font-mono break-all">{error}</p>
+              {error.toLowerCase().includes('supabase') || error.toLowerCase().includes('fetch') ? (
+                <p className="text-forge-text2/60 text-xs font-mono mt-1.5">
+                  Check that NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY are set in .env.local
+                </p>
+              ) : null}
+            </div>
+          )}
 
           <div className="flex gap-3 pt-2">
             <button

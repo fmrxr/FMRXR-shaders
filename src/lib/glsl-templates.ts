@@ -2,8 +2,8 @@ export const GLSL_TEMPLATES: Record<string, string> = {
   blank: `precision highp float;
 
 uniform float iTime;
-uniform vec2  iResolution;
-uniform vec2  iMouse;
+uniform vec3  iResolution;
+uniform vec4  iMouse;
 uniform int   iFrame;
 
 void main() {
@@ -15,8 +15,8 @@ void main() {
   plasma: `precision highp float;
 
 uniform float iTime;
-uniform vec2  iResolution;
-uniform vec2  iMouse;
+uniform vec3  iResolution;
+uniform vec4  iMouse;
 uniform int   iFrame;
 
 // @label Speed  @min 0.1 @max 5.0
@@ -50,8 +50,8 @@ void main() {
   fractal: `precision highp float;
 
 uniform float iTime;
-uniform vec2  iResolution;
-uniform vec2  iMouse;
+uniform vec3  iResolution;
+uniform vec4  iMouse;
 
 // @label Iterations @min 20.0 @max 512.0
 uniform float u_maxIter;
@@ -89,8 +89,8 @@ void main() {
   raymarching: `precision highp float;
 
 uniform float iTime;
-uniform vec2  iResolution;
-uniform vec2  iMouse;
+uniform vec3  iResolution;
+uniform vec4  iMouse;
 
 // @label Sphere Radius @min 0.2 @max 1.5
 uniform float u_radius;
@@ -173,7 +173,7 @@ void main() {
   noise: `precision highp float;
 
 uniform float iTime;
-uniform vec2  iResolution;
+uniform vec3  iResolution;
 
 // @label Octaves @min 1.0 @max 8.0
 uniform float u_octaves;
@@ -223,7 +223,7 @@ void main() {
   reaction: `precision highp float;
 
 uniform float iTime;
-uniform vec2  iResolution;
+uniform vec3  iResolution;
 uniform sampler2D iChannel0;
 
 // @label Feed Rate @min 0.01 @max 0.08
@@ -263,7 +263,7 @@ void main() {
 export const DEFAULT_BUFFER_CODE = `precision highp float;
 
 uniform float iTime;
-uniform vec2  iResolution;
+uniform vec3  iResolution;
 uniform sampler2D iChannel0;
 uniform sampler2D iChannel1;
 

@@ -1,5 +1,6 @@
 'use client';
 
+import { useState } from 'react';
 import { useShaderStore } from '@/store/shader-store';
 import type { UniformDef } from '@/types';
 import { clsx } from 'clsx';
@@ -41,15 +42,30 @@ interface UniformControlProps {
 
 function UniformControl({ def, onChange }: UniformControlProps) {
   const { name, type, value, min = 0, max = 1, step, label } = def;
+  // Allow toggling vec3/vec4 between color picker and sliders
+  const [forceColor, setForceColor] = useState(type === 'color');
 
-  if (type === 'color') {
+  const isColorType = type === 'color' || ((type === 'vec3' || type === 'vec4') && forceColor);
+  const canToggleColor = type === 'vec3' || type === 'vec4' || type === 'color';
+
+  // ── Color picker ────────────────────────────────────────────────────
+  if (isColorType) {
     const rgb = Array.isArray(value) ? value as number[] : [0.5, 0.5, 0.5];
     const hex = rgbToHex(rgb[0], rgb[1], rgb[2]);
     return (
       <div>
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-xs font-mono text-forge-accent3">{label}</span>
-          <span className="text-xs font-mono text-forge-text2 opacity-60">{name}</span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-xs font-mono text-forge-text2 opacity-60">{name}</span>
+            {canToggleColor && type !== 'color' && (
+              <button
+                onClick={() => setForceColor(false)}
+                className="text-forge-text2/40 hover:text-forge-text2 text-xs font-mono transition-colors"
+                title="Switch to sliders"
+              >⇄</button>
+            )}
+          </div>
         </div>
         <div className="flex items-center gap-3">
           <input
@@ -57,16 +73,40 @@ function UniformControl({ def, onChange }: UniformControlProps) {
             value={hex}
             onChange={(e) => {
               const [r, g, b] = hexToRgb(e.target.value);
-              onChange([r, g, b]);
+              const next = type === 'vec4' && Array.isArray(value) && value.length === 4
+                ? [r, g, b, (value as number[])[3]]
+                : [r, g, b];
+              onChange(next as UniformDef['value']);
             }}
             className="w-8 h-8 rounded cursor-pointer border border-forge-border2 bg-transparent p-0.5"
           />
+          <div className="flex-1 h-8 rounded" style={{ background: `linear-gradient(135deg, ${hex}, #000)` }} />
           <span className="text-xs font-mono text-forge-text2">{hex.toUpperCase()}</span>
         </div>
+        {/* Alpha slider for vec4 */}
+        {(type === 'vec4' || type === 'color') && Array.isArray(value) && value.length === 4 && (
+          <div className="flex items-center gap-2 mt-2">
+            <span className="text-forge-text2 text-xs font-mono w-3">A</span>
+            <input
+              type="range" min={0} max={1} step={0.01}
+              value={(value as number[])[3]}
+              onChange={(e) => {
+                const next = [...(value as number[])] as [number, number, number, number];
+                next[3] = parseFloat(e.target.value);
+                onChange(next);
+              }}
+              className="flex-1 accent-forge-accent"
+            />
+            <span className="text-forge-text2 text-xs font-mono w-10 text-right">
+              {((value as number[])[3]).toFixed(2)}
+            </span>
+          </div>
+        )}
       </div>
     );
   }
 
+  // ── Bool toggle ─────────────────────────────────────────────────────
   if (type === 'bool') {
     return (
       <div className="flex items-center justify-between">
@@ -89,6 +129,7 @@ function UniformControl({ def, onChange }: UniformControlProps) {
     );
   }
 
+  // ── Vec2 sliders ────────────────────────────────────────────────────
   if (type === 'vec2') {
     const v = Array.isArray(value) ? value as [number, number] : [0, 0];
     return (
@@ -121,6 +162,87 @@ function UniformControl({ def, onChange }: UniformControlProps) {
     );
   }
 
+  // ── Vec3 sliders (with color toggle) ────────────────────────────────
+  if (type === 'vec3') {
+    const v = Array.isArray(value) ? value as [number, number, number] : [0, 0, 0];
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs font-mono text-forge-accent3">{label}</span>
+          <button
+            onClick={() => setForceColor(true)}
+            className="text-forge-text2/40 hover:text-forge-accent text-xs font-mono transition-colors"
+            title="Switch to color picker"
+          >
+            🎨
+          </button>
+        </div>
+        <div className="space-y-2">
+          {(['X', 'Y', 'Z'] as const).map((axis, i) => (
+            <div key={axis} className="flex items-center gap-2">
+              <span className="text-forge-text2 text-xs font-mono w-3">{axis}</span>
+              <input
+                type="range"
+                min={min} max={max} step={step ?? (max - min) / 200}
+                value={v[i]}
+                onChange={(e) => {
+                  const next = [...v] as [number, number, number];
+                  next[i] = parseFloat(e.target.value);
+                  onChange(next);
+                }}
+                className="flex-1 accent-forge-accent"
+              />
+              <span className="text-forge-text2 text-xs font-mono w-10 text-right">
+                {v[i].toFixed(2)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Vec4 sliders (with color toggle) ────────────────────────────────
+  if (type === 'vec4') {
+    const v = Array.isArray(value) ? value as [number, number, number, number] : [0, 0, 0, 1];
+    return (
+      <div>
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs font-mono text-forge-accent3">{label}</span>
+          <button
+            onClick={() => setForceColor(true)}
+            className="text-forge-text2/40 hover:text-forge-accent text-xs font-mono transition-colors"
+            title="Switch to color picker"
+          >
+            🎨
+          </button>
+        </div>
+        <div className="space-y-2">
+          {(['X', 'Y', 'Z', 'W'] as const).map((axis, i) => (
+            <div key={axis} className="flex items-center gap-2">
+              <span className="text-forge-text2 text-xs font-mono w-3">{axis}</span>
+              <input
+                type="range"
+                min={min} max={max} step={step ?? (max - min) / 200}
+                value={v[i]}
+                onChange={(e) => {
+                  const next = [...v] as [number, number, number, number];
+                  next[i] = parseFloat(e.target.value);
+                  onChange(next);
+                }}
+                className="flex-1 accent-forge-accent"
+              />
+              <span className="text-forge-text2 text-xs font-mono w-10 text-right">
+                {v[i].toFixed(2)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Int slider ──────────────────────────────────────────────────────
   if (type === 'int') {
     const v = typeof value === 'number' ? value : 0;
     return (
@@ -144,7 +266,7 @@ function UniformControl({ def, onChange }: UniformControlProps) {
     );
   }
 
-  // float (default)
+  // ── Float slider (default) ──────────────────────────────────────────
   const v = typeof value === 'number' ? value : 0;
   const pct = ((v - min) / (max - min)) * 100;
 
@@ -177,7 +299,7 @@ function UniformControl({ def, onChange }: UniformControlProps) {
 // ── Color utils ──────────────────────────────────────────────────────
 
 function rgbToHex(r: number, g: number, b: number): string {
-  const toHex = (v: number) => Math.round(v * 255).toString(16).padStart(2, '0');
+  const toHex = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 255).toString(16).padStart(2, '0');
   return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
 }
 

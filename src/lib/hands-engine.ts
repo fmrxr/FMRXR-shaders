@@ -33,12 +33,20 @@ declare class MPHands {
   close(): void;
 }
 
+// Exponential smoothing factor (0 = no smoothing, 1 = frozen)
+const SMOOTH = 0.5;
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
 export class HandsEngine {
   private hands: MPHands | null = null;
   private video: HTMLVideoElement | null = null;
   private stream: MediaStream | null = null;
   private running = false;
   private data: HandData | null = null;
+  private smoothed: HandData | null = null;
   private onUpdate: (data: HandData | null) => void;
 
   constructor(onUpdate: (data: HandData | null) => void) {
@@ -79,11 +87,25 @@ export class HandsEngine {
 
     this.hands.onResults((results: HandsResults) => {
       if (results.multiHandLandmarks?.length) {
-        this.data = this.computeHandData(results.multiHandLandmarks[0]);
+        const raw = this.computeHandData(results.multiHandLandmarks[0]);
+        this.data = raw;
+        // Exponential smoothing
+        if (!this.smoothed) {
+          this.smoothed = raw;
+        } else {
+          const s = this.smoothed;
+          this.smoothed = {
+            pos:          [lerp(s.pos[0], raw.pos[0], 1 - SMOOTH),   lerp(s.pos[1], raw.pos[1], 1 - SMOOTH)],
+            pinchStrength: lerp(s.pinchStrength, raw.pinchStrength, 1 - SMOOTH),
+            handOpen:      lerp(s.handOpen,      raw.handOpen,      1 - SMOOTH),
+            wrist:        [lerp(s.wrist[0], raw.wrist[0], 1 - SMOOTH), lerp(s.wrist[1], raw.wrist[1], 1 - SMOOTH), lerp(s.wrist[2], raw.wrist[2], 1 - SMOOTH)],
+          };
+        }
       } else {
         this.data = null;
+        this.smoothed = null;
       }
-      this.onUpdate(this.data);
+      this.onUpdate(this.smoothed);
     });
 
     // Hidden video element for camera feed

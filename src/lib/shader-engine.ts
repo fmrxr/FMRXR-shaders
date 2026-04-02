@@ -178,8 +178,8 @@ export class ShaderEngine {
     const hasVersion = /^\s*#version/.test(code);
 
     // ── 2. Shadertoy uniform declarations ─────────────────────────
-    // Inject if not already declared (user may have written their own)
-    const needsUniforms = !code.includes('uniform vec3 iResolution');
+    // Inject if shader has no iTime declaration (Shadertoy-style, relies on platform injection)
+    const needsUniforms = !/uniform\s+\S+\s+iTime\b/.test(code);
     const uniformsHeader = needsUniforms ? SHADERTOY_UNIFORMS_HEADER(isWebGL2) : '';
 
     // ── 3. Precision ───────────────────────────────────────────────
@@ -354,12 +354,15 @@ export class ShaderEngine {
     }
 
     // Effective mouse: hand tracking overrides pointer if hands enabled
+    // handData.pos is 0–1 normalized, Y flipped (0=bottom). Mirror X for natural feel.
     let effectiveMouse = this.mouse;
     if (this.handsEnabled && this.handData) {
-      const hx = this.handData.pos[0] * this.canvas.width;
-      const hy = this.handData.pos[1] * this.canvas.height;
-      const isPinching = this.handData.pinchStrength > 0.7;
-      effectiveMouse = [hx, hy, isPinching ? hx : 0, isPinching ? hy : 0];
+      const w = this.canvas.width;
+      const h = this.canvas.height;
+      const hx = (1 - this.handData.pos[0]) * w;   // mirror X (front camera)
+      const hy = this.handData.pos[1] * h;           // Y already bottom-up
+      const isPinching = this.handData.pinchStrength > 0.65;
+      effectiveMouse = [hx, hy, isPinching ? hx : this.mouse[2], isPinching ? hy : this.mouse[3]];
     }
 
     for (const bufferId of this.bufferOrder) {

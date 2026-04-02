@@ -12,18 +12,21 @@ export function TopBar() {
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [showImportModal, setShowImportModal] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const handleSave = async (title: string, description: string, tags: string[], isPublic: boolean) => {
     setSaving(true);
+    setSaveError(null);
     try {
       const saved = await saveShader(
         { ...project, title, description, tags, isPublic },
-        project.id || undefined
+        /^[0-9a-f-]{36}$/.test(project.id ?? '') ? project.id : undefined
       );
       addSavedProject(saved);
       setShowSaveModal(false);
     } catch (e) {
-      console.error('Save failed:', e);
+      const msg = (e as Error)?.message ?? String(e);
+      setSaveError(msg);
     } finally {
       setSaving(false);
     }
@@ -126,8 +129,9 @@ export function TopBar() {
         <SaveModal
           project={project}
           saving={saving}
+          error={saveError}
           onSave={handleSave}
-          onClose={() => setShowSaveModal(false)}
+          onClose={() => { setShowSaveModal(false); setSaveError(null); }}
         />
       )}
 
